@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>タブレット・リモコン</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="リモコン">
+<meta name="theme-color" content="#15171c">
+<style>
+  :root { --bg:#15171c; --panel:#22252d; --acc:#2fa872; --txt:#d8dce6; }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent;
+      -webkit-user-select:none; user-select:none; }
+  html,body { height:100%; overflow:hidden; background:var(--bg); color:var(--txt);
+              font-family:system-ui,sans-serif; touch-action:none; overscroll-behavior:none; }
+  #app { display:flex; flex-direction:column; height:100%;
+         padding:env(safe-area-inset-top) env(safe-area-inset-right)
+                 env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #bar { display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--panel); }
+  #dot { width:10px; height:10px; border-radius:50%; background:#e05555; flex:none; }
+  #dot.on { background:#4fd56b; }
+  #bar span { font-size:13px; opacity:.85; }
+  #bar input[type=range] { margin-left:auto; width:110px; accent-color:var(--acc); }
+  #bar #bset, #bar #bble { flex:none; padding:5px 12px; font-size:15px; border-radius:8px;
+               background:#2e323c; border:none; color:var(--txt); }
+  #bar #bble { font-size:12px; padding:6px 10px; }
+  #bar #bset.on, #bar #bble.on { background:var(--acc); }
+  #set .diag { font-size:11px; opacity:.5; padding:6px 0 0; line-height:1.5; }
+  #set { display:none; background:var(--panel); padding:2px 12px 10px;
+         border-top:1px solid #2e323c; }
+  #set.show { display:block; }
+  #set .srow { display:flex; align-items:center; gap:10px; font-size:13px; padding:4px 0; }
+  #set .srow span:first-child { width:120px; opacity:.85; }
+  #set .srow span:last-child { width:34px; text-align:right; opacity:.7; }
+  #set input[type=range] { flex:1; accent-color:var(--acc); }
+  #pad { flex:1; position:relative; background:
+         radial-gradient(circle at 50% 45%, #1c2320 0%, var(--bg) 75%); }
+  #pad.hide { display:none; }
+  /* 長押しドラッグ中の表示 */
+  #pad.dragging { background:radial-gradient(circle at 50% 45%, #24483a 0%, #16211c 80%);
+                  box-shadow:inset 0 0 0 2px var(--acc); }
+  #dragbadge { position:absolute; top:10px; left:50%; transform:translateX(-50%);
+               display:none; padding:5px 14px; border-radius:14px; font-size:12px;
+               background:var(--acc); color:#fff; pointer-events:none; }
+  #pad.dragging #dragbadge { display:block; }
+  #hint { position:absolute; inset:0; display:flex; flex-direction:column; gap:6px;
+          align-items:center; justify-content:center; pointer-events:none;
+          font-size:13px; opacity:.4; text-align:center; line-height:1.7; }
+  /* テンキー(東プレRealforce配列) */
+  #tenkey { flex:1; display:none; flex-direction:column; gap:6px; padding:8px; }
+  #tenkey.show { display:flex; }
+  #tenkey .tkbar { display:flex; align-items:center; gap:8px; }
+  #tenkey .tkhint { flex:1; font-size:11px; opacity:.55; line-height:1.4; }
+  #tenkey #tkedit { flex:0 0 64px; padding:8px 2px; font-size:13px; }
+  #tenkey .tkgrid { flex:1; display:grid; grid-template-columns:repeat(4,1fr);
+                    grid-template-rows:repeat(5,1fr); gap:6px; }
+  #tenkey .tk { position:relative; height:100%; font-size:24px; font-weight:600; }
+  #tenkey .tk.op { font-size:22px; font-weight:400; background:#34394a; }
+  #tenkey .cap { display:block; max-width:100%; padding:0 4px; white-space:nowrap;
+                 overflow:hidden; text-overflow:ellipsis; }
+  #tenkey:not(.proglayer) #tkedit { display:none; }
+  /* プログラムキー層: 同じ配列のまま、各キーを登録文字列に入れ替える */
+  #tenkey.proglayer .tk, #tenkey.proglayer .tk.op { font-size:14px; font-weight:500;
+                                                    background:#2b3340; }
+  #tenkey.proglayer .tk.empty .cap { color:#4ec98a; opacity:.55; font-size:22px; }
+  #tenkey.proglayer #tkhint { color:#7fe0b0; opacity:.8; }
+  /* キー登録エディタ */
+  #editor { display:none; position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.55);
+            align-items:center; justify-content:center; }
+  #editor.show { display:flex; }
+  #editor .edbox { background:var(--panel); padding:16px; border-radius:12px;
+                   width:86%; max-width:420px; display:flex; flex-direction:column; gap:10px; }
+  #editor #edtitle { font-size:14px; }
+  #editor #edinput { padding:11px; font-size:16px; border-radius:8px; border:none;
+                     background:#2e323c; color:var(--txt); -webkit-user-select:text; user-select:text; }
+  #editor .edrow { display:flex; gap:8px; }
+  #editor #edsave { background:var(--acc); color:#fff; }
+  .btnrow { display:flex; gap:6px; padding:6px 6px 0 6px; background:var(--panel); }
+  .btnrow:last-child { padding-bottom:6px; }
+  button { flex:1; padding:12px 2px; font-size:14px; border:none; border-radius:8px;
+           background:#2e323c; color:var(--txt); }
+  button:active { background:var(--acc); }
+  button.tog.on { background:var(--acc); }
+  #kbd { display:none; flex-direction:column; gap:6px; padding:6px; background:var(--panel); }
+  #kbd.show { display:flex; }
+  #kbd .row { display:flex; gap:6px; }
+  #kbd input { flex:1; padding:11px; font-size:16px; border-radius:8px; border:none;
+               background:#2e323c; color:var(--txt); -webkit-user-select:text; user-select:text; }
+  #kbd button { flex:1; padding:11px 2px; font-size:13px; }
+  #kbd #send { flex:0 0 72px; background:var(--acc); color:#fff; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <div id="dot"></div><span id="st">接続中...</span><span id="ver" style="opacity:.35;font-size:11px;margin-left:6px">v1.15</span>
+    <button id="bble" style="margin-left:auto">BLE接続</button>
+    <button id="bset">⚙</button>
+  </div>
+  <div id="set">
+    <div class="srow">
+      <span>カーソル感度</span>
+      <input type="range" id="sens" min="0.5" max="4" step="0.25" value="1.75">
+      <span id="sensv">1.8</span>
+    </div>
+    <div class="srow">
+      <span>加速(速く振ると伸びる)</span>
+      <input type="range" id="accel" min="0" max="2" step="0.25" value="1">
+      <span id="accelv">1.0</span>
+    </div>
+    <div class="srow">
+      <span>スクロール速度</span>
+      <input type="range" id="scr" min="0.5" max="3" step="0.25" value="1">
+      <span id="scrv">1.0</span>
+    </div>
+    <div class="srow">
+      <span>スワイプ(画面切替)の強さ</span>
+      <input type="range" id="swp" min="0.5" max="2" step="0.25" value="1.25">
+      <span id="swpv">1.25</span>
+    </div>
+    <div class="srow">
+      <span>長押しでドラッグ(秒)</span>
+      <input type="range" id="lpt" min="0.3" max="1.2" step="0.1" value="0.5">
+      <span id="lptv">0.5</span>
+    </div>
+    <div class="diag" id="diag"></div>
+  </div>
+  <div id="pad">
+    <div id="dragbadge">ドラッグ中 — 離すと確定</div>
+    <div id="hint">
+      1本指でなぞる: カーソル移動 / タップ: タップ<br>
+      <b>押さえたままにする: ドラッグ開始</b> → 動かして運び、離すと確定<br>
+      2本指タップ: 長押し / 2本指で上下: スクロール<br>
+      2本指で左右: 画面の切り替え(横スワイプ)<br>
+      「🔢 数字」: テンキー → プログラムキー → 戻る と切替
+    </div>
+  </div>
+  <div id="tenkey">
+    <div class="tkbar">
+      <div class="tkhint" id="tkhint">テンキー(Realforce配列): 1回押しで入力</div>
+      <button id="tkedit" class="tog">編集</button>
+    </div>
+    <div class="tkgrid">
+      <button class="tk op" data-id="bs"  data-k="backspace" data-cap="⌫" style="grid-area:1/1"><span class="cap">⌫</span></button>
+      <button class="tk op" data-id="div" data-t="/" data-cap="/" style="grid-area:1/2"><span class="cap">/</span></button>
+      <button class="tk op" data-id="mul" data-t="*" data-cap="*" style="grid-area:1/3"><span class="cap">*</span></button>
+      <button class="tk op" data-id="sub" data-t="-" data-cap="-" style="grid-area:1/4"><span class="cap">-</span></button>
+      <button class="tk" data-id="7" data-t="7" data-cap="7" style="grid-area:2/1"><span class="cap">7</span></button>
+      <button class="tk" data-id="8" data-t="8" data-cap="8" style="grid-area:2/2"><span class="cap">8</span></button>
+      <button class="tk" data-id="9" data-t="9" data-cap="9" style="grid-area:2/3"><span class="cap">9</span></button>
+      <button class="tk op" data-id="add" data-t="+" data-cap="+" style="grid-area:2/4/4/5"><span class="cap">+</span></button>
+      <button class="tk" data-id="4" data-t="4" data-cap="4" style="grid-area:3/1"><span class="cap">4</span></button>
+      <button class="tk" data-id="5" data-t="5" data-cap="5" style="grid-area:3/2"><span class="cap">5</span></button>
+      <button class="tk" data-id="6" data-t="6" data-cap="6" style="grid-area:3/3"><span class="cap">6</span></button>
+      <button class="tk" data-id="1" data-t="1" data-cap="1" style="grid-area:4/1"><span class="cap">1</span></button>
+      <button class="tk" data-id="2" data-t="2" data-cap="2" style="grid-area:4/2"><span class="cap">2</span></button>
+      <button class="tk" data-id="3" data-t="3" data-cap="3" style="grid-area:4/3"><span class="cap">3</span></button>
+      <button class="tk op" data-id="ent" data-k="enter" data-cap="Enter" style="grid-area:4/4/6/5"><span class="cap">Enter</span></button>
+      <button class="tk" data-id="0" data-t="0" data-cap="0" style="grid-area:5/1/6/3"><span class="cap">0</span></button>
+      <button class="tk op" data-id="dot" data-t="." data-cap="." style="grid-area:5/3"><span class="cap">.</span></button>
+    </div>
+  </div>
+  <div id="editor">
+    <div class="edbox">
+      <div id="edtitle"></div>
+      <input id="edinput" placeholder="例: 0000 / +81 / function( など" autocomplete="off">
+      <div class="edrow">
+        <button id="edsave">保存</button>
+        <button id="edclear">クリア</button>
+        <button id="edcancel">閉じる</button>
+      </div>
+    </div>
+  </div>
+  <div id="kbd">
+    <div class="row">
+      <input id="txt" placeholder="ここに入力して送信(日本語OK)" autocomplete="off">
+      <button id="send">送信</button>
+    </div>
+    <div class="row">
+      <button data-k="enter">改行</button><button data-k="backspace">1文字消す</button>
+      <button data-k="volup">音量+</button><button data-k="voldown">音量-</button>
+    </div>
+  </div>
+  <div class="btnrow">
+    <button id="btap">タップ</button>
+    <button id="blong">長押し</button>
+    <button id="bdrag" class="tog">ドラッグ</button>
+    <button id="bkbd" class="tog">⌨ 入力</button>
+    <button id="btk" class="tog">🔢 数字</button>
+  </div>
+  <div class="btnrow">
+    <button data-k="back">◀ 戻る</button>
+    <button data-k="home">● ホーム</button>
+    <button data-k="recents">■ 履歴</button>
+    <button data-k="notif">▼ 通知</button>
+  </div>
+</div>
+<script>
+let ws = null, alive = false, reconnectTimer = null;
+const $ = id => document.getElementById(id);
+const sens = $('sens'), accel = $('accel'), scr = $('scr'), swp = $('swp'), lpt = $('lpt');
+function bindSetting(el, key, label) {
+  el.value = localStorage.getItem(key) || el.value;
+  const show = () => { if (label) label.textContent = parseFloat(el.value).toFixed(1); };
+  el.oninput = () => { localStorage.setItem(key, el.value); show(); };
+  show();
+}
+bindSetting(sens, 'sens', $('sensv'));
+bindSetting(accel, 'accel', $('accelv'));
+bindSetting(scr, 'scr', $('scrv'));
+bindSetting(swp, 'swp', $('swpv'));
+bindSetting(lpt, 'lpt', $('lptv'));
+$('bset').onclick = () => {
+  $('set').classList.toggle('show');
+  $('bset').classList.toggle('on');
+};
+
+// =====================================================================
+//  通信層: Wi-Fi(WebSocket) と Bluetooth(BLE) の2系統。BLEが繋がればBLE優先。
+// =====================================================================
+const BLE_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const BLE_RX      = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+let bleDevice = null, bleChar = null;
+const bleSupported = !!(navigator.bluetooth && navigator.bluetooth.requestDevice);
+// ネイティブアプリ(WebView)の中で動いているか。中にいれば通信はSwift側のBluetoothが担う。
+const nativeMode = !!(window.webkit && window.webkit.messageHandlers
+                      && window.webkit.messageHandlers.native);
+let nativeConnected = false;
+
+function updateConn(msg) {
+  if (nativeMode) {
+    $('dot').className = nativeConnected ? 'on' : '';
+    $('st').textContent = msg || (nativeConnected ? '接続済み(Bluetooth)'
+                                                  : '未接続 — 右上の接続ボタンを押してください');
+    $('bble').classList.toggle('on', nativeConnected);
+    $('bble').textContent = nativeConnected ? '切断' : '接続';
+    return;
+  }
+  const t = bleChar ? 'BLE' : (alive ? 'Wi-Fi' : null);
+  $('dot').className = t ? 'on' : '';
+  $('st').textContent = msg || (t ? '接続済み(' + t + ')'
+                                  : (wifiMode ? '未接続' : 'BLE専用 — 右上から接続'));
+  $('bble').classList.toggle('on', !!bleChar);
+  $('bble').textContent = bleChar ? 'BLE切断' : 'BLE接続';
+}
+
+// Swift側から接続状態を受け取る窓口
+window.nativeStatus = function (state, text) {
+  nativeConnected = (state === 'connected');
+  updateConn(text || undefined);
+};
+
+// --- Wi-Fi (WebSocket) ---
+// タブレットが配信するページはポート8765。それ以外(HTTPSサイトに置いた場合や
+// 単体ファイルで開いた場合)はWi-Fi版のサーバーが無いので、BLE専用として動かす。
+const wifiMode = (location.protocol !== 'file:' && location.port === '8765');
+
+function connect() {
+  clearTimeout(reconnectTimer);
+  if (nativeMode) return; // ネイティブアプリ内ではWi-Fiを使わない(Swift側のBluetoothが担当)
+  if (bleChar) return;   // BLE使用中はWi-Fiを使わない
+  if (!wifiMode) { updateConn('BLE専用モード — 右上から接続してください'); return; }
+  if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} }
+  try { ws = new WebSocket('ws://' + location.host + '/ws'); } catch (e) { return; }
+  ws.onopen = () => { alive = true; updateConn(); };
+  ws.onclose = () => { alive = false;
+                       if (!bleChar) { updateConn('再接続中...');
+                                       reconnectTimer = setTimeout(connect, 1200); } };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+}
+connect();
+// 画面復帰時に切れていたら即再接続(iOSはバックグラウンドでWebSocketを切るため)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !bleChar && (!ws || ws.readyState > 1)) connect();
+});
+// 接続維持: 無害なpingを定期送信(ホストは未知コマンドとして無視する)
+setInterval(() => { if (alive && !bleChar) { try { ws.send('ping'); } catch (e) {} } }, 20000);
+
+// --- BLE (Web Bluetooth) ---
+// 移動コマンドは合算し、約25msごとにまとめて送る(BLEは毎秒60回の送信に耐えないため)
+let pendX = 0, pendY = 0, hasPend = false, bleQueue = [], flushTimer = null, bleBusy = false;
+
+function bleSend(msg) {
+  if (msg.startsWith('m ')) {
+    const p = msg.slice(2).split(' ');
+    pendX += parseFloat(p[0]) || 0;
+    pendY += parseFloat(p[1]) || 0;
+    hasPend = true;
+  } else {
+    bleQueue.push(msg);
+  }
+  if (!flushTimer) flushTimer = setTimeout(bleFlush, 25);
+}
+
+async function bleFlush() {
+  flushTimer = null;
+  if (!nativeMode && !bleChar) { hasPend = false; bleQueue = []; return; }
+  if (bleBusy) { flushTimer = setTimeout(bleFlush, 15); return; }
+  const parts = [];
+  if (hasPend) { parts.push('m ' + pendX.toFixed(1) + ' ' + pendY.toFixed(1));
+                 pendX = 0; pendY = 0; hasPend = false; }
+  while (bleQueue.length) parts.push(bleQueue.shift());
+  if (!parts.length) return;
+  // ネイティブアプリ内では、まとめた文字列をSwiftへ渡す(Swiftが実際のBluetooth送信を行う)
+  if (nativeMode) {
+    window.webkit.messageHandlers.native.postMessage({ t: 'tx', v: parts.join('\n') + '\n' });
+    if (hasPend || bleQueue.length) flushTimer = setTimeout(bleFlush, 5);
+    return;
+  }
+  const data = new TextEncoder().encode(parts.join('\n') + '\n');
+  bleBusy = true;
+  try {
+    // 20バイトずつに分割(MTU未拡張でも確実に通る。ホスト側が改行で再結合する)
+    for (let i = 0; i < data.length; i += 20) {
+      const chunk = data.slice(i, i + 20);
+      if (bleChar.writeValueWithoutResponse) await bleChar.writeValueWithoutResponse(chunk);
+      else await bleChar.writeValue(chunk);
+    }
+  } catch (e) {
+    /* 書き込み失敗(切断など)は次のイベントで検知される */
+  }
+  bleBusy = false;
+  if (hasPend || bleQueue.length) flushTimer = setTimeout(bleFlush, 5);
+}
+
+async function bleConnect() {
+  if (!bleSupported) {
+    alert('この画面ではBluetoothが使えません。\n\n'
+        + 'iPhoneの場合、標準のSafariはWeb Bluetoothに対応していません。\n'
+        + 'App Storeの「Bluefy」ブラウザでこのページを開いてください。');
+    return;
+  }
+  try {
+    updateConn('Bluetooth機器を選択中…');
+    const dev = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [BLE_SERVICE] }]
+    });
+    dev.addEventListener('gattserverdisconnected', bleLost);
+    const srv = await dev.gatt.connect();
+    const svc = await srv.getPrimaryService(BLE_SERVICE);
+    bleChar = await svc.getCharacteristic(BLE_RX);
+    bleDevice = dev;
+    // BLEに切り替わったのでWi-Fiは止める
+    clearTimeout(reconnectTimer);
+    if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} }
+    alive = false;
+    updateConn();
+  } catch (e) {
+    bleChar = null; bleDevice = null;
+    updateConn(e && e.name === 'NotFoundError' ? '選択されませんでした' : 'BLE接続失敗');
+    setTimeout(() => updateConn(), 2500);
+  }
+}
+
+function bleLost() {
+  bleChar = null; bleDevice = null;
+  hasPend = false; bleQueue = [];
+  updateConn('BLE切断 — Wi-Fiに戻します');
+  connect();
+}
+
+$('bble').onclick = () => {
+  if (nativeMode) {
+    // アプリ内: Swiftへスキャン/切断を依頼する
+    window.webkit.messageHandlers.native.postMessage({ t: nativeConnected ? 'disconnect' : 'scan' });
+    if (!nativeConnected) updateConn('タブレットを探しています…');
+    return;
+  }
+  if (bleChar) {
+    try { bleDevice.gatt.disconnect(); } catch (e) {}
+    bleLost();
+  } else {
+    bleConnect();
+  }
+};
+if (!bleSupported && !nativeMode) $('bble').style.opacity = '.45';
+// 診断表示
+if (nativeMode) {
+  $('diag').textContent = 'アプリモード(ネイティブBluetooth)';
+} else {
+  $('diag').textContent = 'Web Bluetooth: ' + (bleSupported ? '利用可' : '利用不可')
+    + ' ／ ' + location.protocol.replace(':', '')
+    + ' ／ セキュア: ' + (window.isSecureContext ? 'はい' : 'いいえ');
+}
+
+// --- 送信の入口(どの経路でも同じコマンド) ---
+const send = m => {
+  if (nativeMode) bleSend(m);              // アプリ内: 合算してSwiftへ
+  else if (bleChar) bleSend(m);            // Web Bluetooth
+  else if (alive) { try { ws.send(m); } catch (e) {} }  // Wi-Fi
+};
+updateConn();
+
+// --- トラックパッド ジェスチャー ---
+const pad = $('pad');
+let touches = {}, maxFingers = 0, startT = 0, moved = 0, scrollAcc = 0;
+let scrollAxis = null, axisX = 0, axisY = 0;  // 2本指の縦横判定(最初に動いた方向に固定)
+let lpTimer = null, padDrag = false;          // 長押しドラッグ
+
+// 指を押さえたままにするとドラッグ開始(Googleリモートデスクトップと同じ操作感)
+function startPadDrag() {
+  if (padDrag || dragging) return;   // ボタン側のドラッグ中は何もしない
+  padDrag = true;
+  send('d l');
+  pad.classList.add('dragging');
+  if (navigator.vibrate) { try { navigator.vibrate(25); } catch (e) {} }
+}
+function endPadDrag() {
+  if (!padDrag) return;
+  padDrag = false;
+  send('u l');
+  pad.classList.remove('dragging');
+}
+
+pad.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (Object.keys(touches).length === 0) { maxFingers = 0; startT = Date.now(); moved = 0;
+                                           scrollAcc = 0; scrollAxis = null; axisX = 0; axisY = 0; }
+  for (const t of e.changedTouches) touches[t.identifier] = { x: t.clientX, y: t.clientY };
+  maxFingers = Math.max(maxFingers, Object.keys(touches).length);
+  clearTimeout(lpTimer);
+  // 1本指で置かれたときだけ長押し判定を始める(2本目が触れたら中止)
+  if (Object.keys(touches).length === 1 && !padDrag) {
+    lpTimer = setTimeout(startPadDrag, parseFloat(lpt.value) * 1000);
+  }
+}, { passive: false });
+
+pad.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const n = Object.keys(touches).length;
+  let sumDx = 0, sumDy = 0, cnt = 0;
+  for (const t of e.changedTouches) {
+    const p = touches[t.identifier];
+    if (!p) continue;
+    sumDx += t.clientX - p.x; sumDy += t.clientY - p.y; cnt++;
+    p.x = t.clientX; p.y = t.clientY;
+  }
+  if (!cnt) return;
+  const dx = sumDx / cnt, dy = sumDy / cnt;
+  moved += Math.abs(dx) + Math.abs(dy);
+  // 長押し判定前に動かしたら、それは普通のカーソル移動なので判定を取り消す
+  if (!padDrag && moved > 12) clearTimeout(lpTimer);
+  if (n === 1) {
+    // 加速: ゆっくり=精密、速く振る=大きく動く
+    const speed = Math.hypot(dx, dy);
+    const f = parseFloat(sens.value)
+            * (1 + parseFloat(accel.value) * Math.min(speed / 12, 2.5));
+    send('m ' + (dx * f).toFixed(1) + ' ' + (dy * f).toFixed(1));
+  } else if (n >= 2 && !padDrag) {
+    axisX += dx; axisY += dy;
+    if (!scrollAxis && Math.abs(axisX) + Math.abs(axisY) > 10) {
+      scrollAxis = Math.abs(axisX) > Math.abs(axisY) ? 'h' : 'v';
+    }
+    if (scrollAxis === 'v') {
+      const step = 22 / parseFloat(scr.value);  // この px ごとにスクロール1ノッチ
+      scrollAcc += dy;
+      while (scrollAcc >= step) { send('s 1'); scrollAcc -= step; }
+      while (scrollAcc <= -step) { send('s -1'); scrollAcc += step; }
+    }
+    // 横方向(scrollAxis === 'h')は、指を離したときに axisX を見て
+    // 1回の決定的なスワイプとして送る(touchend を参照)
+  }
+}, { passive: false });
+
+pad.addEventListener('touchend', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) delete touches[t.identifier];
+  if (Object.keys(touches).length === 0) {
+    clearTimeout(lpTimer);
+    if (padDrag) { endPadDrag(); return; }   // ドラッグ確定(タップ判定はしない)
+    if (scrollAxis === 'h' && Math.abs(axisX) > 40) {
+      // 2本指の横スワイプ → 画面切り替え。指の向きに合わせて左右を決める
+      send('w ' + (axisX < 0 ? 'l' : 'r') + ' ' + parseFloat(swp.value).toFixed(2));
+    } else {
+      const quick = Date.now() - startT < 280 && moved < 12;
+      if (quick) send(maxFingers >= 2 ? 'c r' : 'c l');  // c r = 長押し
+    }
+  }
+}, { passive: false });
+pad.addEventListener('touchcancel', e => {
+  for (const t of e.changedTouches) delete touches[t.identifier];
+  if (Object.keys(touches).length === 0) { clearTimeout(lpTimer); endPadDrag(); }
+});
+
+// --- ボタン ---
+$('btap').onclick = () => send('c l');
+$('blong').onclick = () => send('c r');
+
+let dragging = false;
+$('bdrag').onclick = () => {
+  dragging = !dragging;
+  $('bdrag').classList.toggle('on', dragging);
+  send(dragging ? 'd l' : 'u l');
+};
+$('bkbd').onclick = () => {
+  $('kbd').classList.toggle('show');
+  $('bkbd').classList.toggle('on');
+};
+
+// --- モード切替: 「数字」ボタンで トラックパッド → テンキー → プログラムキー → トラックパッド ---
+const TKEYS = document.querySelectorAll('#tenkey .tk');
+let mode = 0;          // 0=トラックパッド, 1=テンキー, 2=プログラムキー
+let progEdit = false;  // プログラムキー層での割当変更モード
+
+const macroKey = id => 'tkprog_' + id;
+const getMacro = id => localStorage.getItem(macroKey(id)) || '';
+function setMacro(id, v) {
+  if (v) localStorage.setItem(macroKey(id), v); else localStorage.removeItem(macroKey(id));
+  renderKeys();
+}
+
+// 現在の層に合わせてキーの表示文字を入れ替える
+function renderKeys() {
+  const prog = (mode === 2);
+  TKEYS.forEach(el => {
+    const cap = el.querySelector('.cap');
+    if (prog) {
+      const m = getMacro(el.dataset.id);
+      cap.textContent = m || '＋';
+      el.classList.toggle('empty', !m);
+    } else {
+      cap.textContent = el.dataset.cap;
+      el.classList.remove('empty');
+    }
+  });
+}
+
+function applyMode() {
+  endPadDrag();   // モード切替でドラッグが押しっぱなしにならないように
+  $('pad').classList.toggle('hide', mode !== 0);
+  $('tenkey').classList.toggle('show', mode !== 0);
+  $('tenkey').classList.toggle('proglayer', mode === 2);
+  if (mode !== 2 && progEdit) { progEdit = false; $('tkedit').classList.remove('on'); }
+  $('btk').classList.toggle('on', mode !== 0);
+  $('btk').textContent = mode === 0 ? '🔢 数字' : mode === 1 ? '🔢 テンキー' : '⌨ プログラム';
+  $('tkhint').textContent = mode === 2
+    ? 'プログラムキー: 1回押しで登録文字を入力 ／「編集」で割当変更'
+    : 'テンキー(Realforce配列): 1回押しで入力';
+  if (mode !== 0) { $('kbd').classList.remove('show'); $('bkbd').classList.remove('on'); }
+  renderKeys();
+}
+$('btk').onclick = () => { mode = (mode + 1) % 3; applyMode(); };
+
+// 登録エディタ
+let editTarget = null;
+function openEditor(el) {
+  editTarget = el.dataset.id;
+  $('edtitle').textContent = '「' + el.dataset.cap + '」の位置のキーに割り当てる文字列';
+  $('edinput').value = getMacro(editTarget);
+  $('editor').classList.add('show');
+  setTimeout(() => $('edinput').focus(), 60);
+}
+$('edsave').onclick = () => { setMacro(editTarget, $('edinput').value); $('editor').classList.remove('show'); };
+$('edclear').onclick = () => { setMacro(editTarget, ''); $('editor').classList.remove('show'); };
+$('edcancel').onclick = () => { $('editor').classList.remove('show'); };
+$('tkedit').onclick = () => { progEdit = !progEdit; $('tkedit').classList.toggle('on', progEdit); };
+
+// キーの動作: テンキー層=本来の入力 / プログラム層=登録文字(編集中は割当画面)
+function primary(el) {
+  if (el.dataset.t !== undefined) send('t ' + el.dataset.t);
+  else if (el.dataset.k !== undefined) send('k ' + el.dataset.k);
+}
+TKEYS.forEach(el => {
+  el.addEventListener('click', () => {
+    if (mode === 1) {
+      primary(el);
+    } else if (mode === 2) {
+      if (progEdit) { openEditor(el); return; }
+      const m = getMacro(el.dataset.id);
+      if (m) send('t ' + m); else openEditor(el);
+    }
+  });
+});
+applyMode();
+
+// --- 文字入力 ---
+$('send').onclick = () => {
+  const v = $('txt').value;
+  if (v) { send('t ' + v); $('txt').value = ''; }
+};
+$('txt').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('send').onclick(); }
+});
+// 特殊キー(◀●■▼・改行・⌫・音量)はすべて k コマンド。テンキーは上で独自処理するため除外
+document.querySelectorAll('[data-k]').forEach(b => {
+  if (b.closest('#tenkey')) return;
+  b.onclick = () => send('k ' + b.dataset.k);
+});
+</script>
+</body>
+</html>
