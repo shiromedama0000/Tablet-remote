@@ -1,0 +1,46 @@
+name: Build iOS (unsigned ipa)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: get source
+        uses: actions/checkout@v4
+
+      - name: install xcodegen
+        run: brew install xcodegen
+
+      - name: generate project
+        run: xcodegen generate
+
+      - name: build (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project TabletRemote.xcodeproj \
+            -scheme TabletRemote \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: make unsigned ipa
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "App: $APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qr TabletRemote-unsigned.ipa Payload
+
+      - name: upload ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: TabletRemote-ipa
+          path: TabletRemote-unsigned.ipa
+          if-no-files-found: error
