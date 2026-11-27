@@ -18,7 +18,7 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private var wantScan = false
 
     private var txQueue: [Data] = []
-    private var txBusy = false
+    private var pumpTimer: Timer?
 
     override init() {
         super.init()
@@ -27,11 +27,8 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
 
     func startScan() {
         wantScan = true
-        if central.state == .poweredOn {
-            beginScan()
-        } else {
-            delegate?.bleStatusChanged(connected: false, text: "Bluetoothの準備中…")
-        }
+        if central.state == .poweredOn { beginScan() }
+        else { delegate?.bleStatusChanged(connected: false, text: "Bluetoothの準備中…") }
     }
 
     private func beginScan() {
@@ -43,10 +40,7 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         wantScan = false
         central.stopScan()
         txQueue.removeAll()
-        txBusy = false
-        if let p = peripheral {
-            central.cancelPeripheralConnection(p)
-        }
+        if let p = peripheral { central.cancelPeripheralConnection(p) }
     }
 
     func send(_ text: String) {
@@ -57,29 +51,32 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
             txQueue.append(data.subdata(in: i..<end))
             i = end
         }
-        if txQueue.count > 400 {
-            txQueue.removeFirst(txQueue.count - 150)
-        }
+        if txQueue.count > 300 { txQueue.removeFirst(txQueue.count - 120) }
         pump()
     }
 
     private func pump() {
-        guard !txBusy, let p = peripheral, let c = rxChar, !txQueue.isEmpty else { return }
-        txBusy = true
-        let chunk = txQueue.removeFirst()
-        p.writeValue(chunk, for: c, type: .withResponse)
+        guard let p = peripheral, let c = rxChar else { return }
+        while !txQueue.isEmpty {
+            if !p.canSendWriteWithoutResponse { return }
+            let chunk = txQueue.removeFirst()
+            p.writeValue(chunk, for: c, type: .withoutResponse)
+        }
+    }
+
+    private func startPumpTimer() {
+        pumpTimer?.invalidate()
+        pumpTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            self?.pump()
+        }
     }
 
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
         switch c.state {
-        case .poweredOn:
-            if wantScan { beginScan() }
-        case .poweredOff:
-            delegate?.bleStatusChanged(connected: false, text: "Bluetoothをオンにしてください")
-        case .unauthorized:
-            delegate?.bleStatusChanged(connected: false, text: "設定でBluetoothの許可が必要です")
-        default:
-            break
+        case .poweredOn: if wantScan { beginScan() }
+        case .poweredOff: delegate?.bleStatusChanged(connected: false, text: "Bluetoothをオンにしてください")
+        case .unauthorized: delegate?.bleStatusChanged(connected: false, text: "設定でBluetoothの許可が必要です")
+        default: break
         }
     }
 
@@ -104,7 +101,8 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         rxChar = nil
         peripheral = nil
         txQueue.removeAll()
-        txBusy = false
+        pumpTimer?.invalidate()
+        pumpTimer = nil
         delegate?.bleStatusChanged(connected: false, text: "切断されました")
     }
 
@@ -116,13 +114,12 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         if let c = service.characteristics?.first(where: { $0.uuid == rxUUID }) {
             rxChar = c
+            startPumpTimer()
             delegate?.bleStatusChanged(connected: true, text: nil)
-            pump()
         }
     }
 
-    func peripheral(_ p: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        txBusy = false
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         pump()
     }
 }
