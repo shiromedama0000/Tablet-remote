@@ -5,9 +5,6 @@ protocol BleManagerDelegate: AnyObject {
     func bleStatusChanged(connected: Bool, text: String?)
 }
 
-/// iPhone = セントラル。タブレット(ペリフェラル)が広告している
-/// Nordic UART Service を探して自動接続し、RXキャラクタリスティックへ書き込む。
-/// プロトコルはWi-Fi/Web版と同一(改行区切りの文字列)。
 final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     weak var delegate: BleManagerDelegate?
@@ -19,6 +16,9 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private var peripheral: CBPeripheral?
     private var rxChar: CBCharacteristic?
     private var wantScan = false
+
+    private var txQueue: [Data] = []
+    private var txBusy = false
 
     override init() {
         super.init()
@@ -42,25 +42,33 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     func disconnect() {
         wantScan = false
         central.stopScan()
+        txQueue.removeAll()
+        txBusy = false
         if let p = peripheral {
             central.cancelPeripheralConnection(p)
         }
     }
 
-    /// 改行区切りの文字列を20バイトずつ書き込む(タブレット側が改行で再結合する)
     func send(_ text: String) {
-        guard let p = peripheral, let c = rxChar else { return }
         let data = Data(text.utf8)
         var i = 0
-        let step = 20
         while i < data.count {
-            let end = min(i + step, data.count)
-            p.writeValue(data.subdata(in: i..<end), for: c, type: .withoutResponse)
+            let end = min(i + 20, data.count)
+            txQueue.append(data.subdata(in: i..<end))
             i = end
         }
+        if txQueue.count > 400 {
+            txQueue.removeFirst(txQueue.count - 150)
+        }
+        pump()
     }
 
-    // MARK: - CBCentralManagerDelegate
+    private func pump() {
+        guard !txBusy, let p = peripheral, let c = rxChar, !txQueue.isEmpty else { return }
+        txBusy = true
+        let chunk = txQueue.removeFirst()
+        p.writeValue(chunk, for: c, type: .withResponse)
+    }
 
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
         switch c.state {
@@ -77,7 +85,6 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
 
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        // 自前の固有サービスなので、最初に見つかった機器へ接続する
         c.stopScan()
         peripheral = p
         p.delegate = self
@@ -96,10 +103,10 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
         rxChar = nil
         peripheral = nil
+        txQueue.removeAll()
+        txBusy = false
         delegate?.bleStatusChanged(connected: false, text: "切断されました")
     }
-
-    // MARK: - CBPeripheralDelegate
 
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
         guard let svc = p.services?.first(where: { $0.uuid == serviceUUID }) else { return }
@@ -110,6 +117,12 @@ final class BleManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         if let c = service.characteristics?.first(where: { $0.uuid == rxUUID }) {
             rxChar = c
             delegate?.bleStatusChanged(connected: true, text: nil)
+            pump()
         }
+    }
+
+    func peripheral(_ p: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        txBusy = false
+        pump()
     }
 }
